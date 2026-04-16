@@ -117,11 +117,16 @@ class VisitorOrchestrator:
                 time.sleep(60)
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python visitor.py <url>")
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(description="Stealth Website Visitor")
+    parser.add_argument("url", help="Target URL to visit")
+    parser.add_argument("--no-vpn", action="store_true", help="Skip VPN rotation (for testing)")
+    args = parser.parse_args()
     
-    target_url = sys.argv[1]
     orchestrator = VisitorOrchestrator()
-    orchestrator.run(target_url)
+    
+    if args.no_vpn:
+        logger.info("Running in NO-VPN mode...")
+        orchestrator.perform_visit(args.url)
+    else:
+        orchestrator.run(args.url)
