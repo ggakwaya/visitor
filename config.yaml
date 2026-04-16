@@ -1,4 +1,12 @@
+# List of URLs to visit and their target visit count
+targets:
+  - url: "https://www.youtube.com/watch?v=O0OiXEGsMuI"
+    goal: 100
+  - url: "https://www.google.com"
+    goal: 50
+
 # Geographic probabilities for VPN rotation
+# ... (rest of the file)
 locations:
   - country: "United States"
     weight: 45

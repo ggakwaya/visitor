@@ -3,6 +3,8 @@ import time
 import random
 import subprocess
 import logging
+import json
+import os
 from playwright.sync_api import sync_playwright
 try:
     from playwright_stealth import stealth_sync as apply_stealth
@@ -28,10 +30,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class VisitorOrchestrator:
-    def __init__(self, config_path='config.yaml'):
+    def __init__(self, config_path='config.yaml', stats_path='stats.json'):
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
+        self.stats_path = stats_path
         self.ua = UserAgent()
+        self.load_stats()
+
+    def load_stats(self):
+        """Loads visit statistics from a JSON file."""
+        if os.path.exists(self.stats_path):
+            try:
+                with open(self.stats_path, 'r') as f:
+                    self.stats = json.load(f)
+            except:
+                self.stats = {}
+        else:
+            self.stats = {}
+
+    def save_stats(self):
+        """Saves visit statistics to a JSON file."""
+        with open(self.stats_path, 'w') as f:
+            json.dump(self.stats, f, indent=4)
 
     def rotate_vpn(self):
         """Connects to a new NordVPN location based on weighted probability."""
@@ -42,11 +62,17 @@ class VisitorOrchestrator:
         logger.info(f"Rotating VPN to: {selected['country']} ({selected['nord_name']})")
         
         try:
+            # Set technology to NordLynx for best LXC performance
+            subprocess.run(['nordvpn', 'set', 'technology', 'nordlynx'], capture_output=True)
             # Disconnect first to be clean
             subprocess.run(['nordvpn', 'disconnect'], capture_output=True)
             # Connect to new location
             result = subprocess.run(['nordvpn', 'connect', selected['nord_name']], 
                                  capture_output=True, text=True)
+            
+            # Brief wait for the 'nordlynx' interface to initialize
+            time.sleep(3)
+            
             if result.returncode != 0:
                 logger.error(f"Failed to connect to VPN: {result.stderr}")
                 return False
@@ -79,24 +105,24 @@ class VisitorOrchestrator:
         )[0]
 
         with sync_playwright() as p:
-            browser_engine = getattr(p, browser_type)
-            browser = browser_engine.launch(headless=True)
-            
-            # Create a fresh context (no cookies, no cache)
-            context = browser.new_context(
-                user_agent=persona['user_agent'],
-                viewport=persona['viewport'],
-                device_scale_factor=persona['device_scale_factor']
-            )
-            
-            page = context.new_page()
-            
-            # Apply stealth plugins
-            apply_stealth(page)
-            
-            logger.info(f"Visiting {url} using {browser_type} as {persona['user_agent'][:50]}...")
-            
             try:
+                browser_engine = getattr(p, browser_type)
+                browser = browser_engine.launch(headless=True)
+                
+                # Create a fresh context (no cookies, no cache)
+                context = browser.new_context(
+                    user_agent=persona['user_agent'],
+                    viewport=persona['viewport'],
+                    device_scale_factor=persona['device_scale_factor']
+                )
+                
+                page = context.new_page()
+                
+                # Apply stealth plugins
+                apply_stealth(page)
+                
+                logger.info(f"Visiting {url} using {browser_type} as {persona['user_agent'][:50]}...")
+                
                 # Randomize wait time before navigation
                 time.sleep(random.uniform(2, 5))
                 
@@ -120,16 +146,43 @@ class VisitorOrchestrator:
                 time.sleep(watch_time)
                 
                 logger.info(f"Visit successful: {page.title()}")
+                return True
             except Exception as e:
                 logger.error(f"Visit failed: {e}")
+                return False
             finally:
-                browser.close()
+                try:
+                    browser.close()
+                except:
+                    pass
 
-    def run(self, url):
-        """Main loop for 24/7 operation."""
+    def run(self):
+        """Main loop for 24/7 operation over multiple targets."""
         while True:
+            # Filter targets that haven't reached their goal yet
+            active_targets = []
+            for t in self.config['targets']:
+                current = self.stats.get(t['url'], 0)
+                if current < t['goal']:
+                    active_targets.append(t)
+            
+            if not active_targets:
+                logger.info("All target goals reached! Statistics:")
+                for url, count in self.stats.items():
+                    logger.info(f" - {url}: {count} visits")
+                break
+
+            # Choose a target (randomly from active ones)
+            target = random.choice(active_targets)
+            
             if self.rotate_vpn():
-                self.perform_visit(url)
+                if self.perform_visit(target['url']):
+                    # Update stats
+                    self.stats[target['url']] = self.stats.get(target['url'], 0) + 1
+                    self.save_stats()
+                    
+                    progress = f"[{self.stats[target['url']]}/{target['goal']}]"
+                    logger.info(f"Progress for {target['url']}: {progress}")
             
                 # Randomized delay before next visit
                 delay = random.randint(
@@ -145,15 +198,14 @@ class VisitorOrchestrator:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Stealth Website Visitor")
-    parser.add_argument("url", help="Target URL to visit")
     parser.add_argument("--no-vpn", action="store_true", help="Skip VPN rotation (for testing)")
     args = parser.parse_args()
     
-    target_url = args.url.replace("\\", "")
     orchestrator = VisitorOrchestrator()
     
     if args.no_vpn:
-        logger.info(f"Running in NO-VPN mode for target: {target_url}")
-        orchestrator.perform_visit(target_url)
+        logger.info("Running in NO-VPN mode for all targets...")
+        for target in orchestrator.config['targets']:
+            orchestrator.perform_visit(target['url'])
     else:
-        orchestrator.run(target_url)
+        orchestrator.run()
