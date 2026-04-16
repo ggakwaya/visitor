@@ -4,7 +4,16 @@ import random
 import subprocess
 import logging
 from playwright.sync_api import sync_playwright
-import playwright_stealth
+try:
+    from playwright_stealth import stealth_sync as apply_stealth
+except ImportError:
+    try:
+        from playwright_stealth import stealth as apply_stealth
+        if not callable(apply_stealth):
+            from playwright_stealth.stealth import stealth as apply_stealth
+    except ImportError:
+        # Fallback if stealth is totally missing
+        def apply_stealth(page): logger.warning("Stealth could not be applied: library mismatch")
 from fake_useragent import UserAgent
 
 # Setup Logging
@@ -79,7 +88,7 @@ class VisitorOrchestrator:
             page = context.new_page()
             
             # Apply stealth plugins
-            playwright_stealth.stealth(page)
+            apply_stealth(page)
             
             logger.info(f"Visiting {url} using {browser_type} as {persona['user_agent'][:50]}...")
             
