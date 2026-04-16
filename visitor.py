@@ -4,7 +4,7 @@ import random
 import subprocess
 import logging
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth
+import playwright_stealth
 from fake_useragent import UserAgent
 
 # Setup Logging
@@ -79,7 +79,7 @@ class VisitorOrchestrator:
             page = context.new_page()
             
             # Apply stealth plugins
-            stealth(page)
+            playwright_stealth.stealth(page)
             
             logger.info(f"Visiting {url} using {browser_type} as {persona['user_agent'][:50]}...")
             
