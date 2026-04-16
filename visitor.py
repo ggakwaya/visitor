@@ -84,14 +84,27 @@ class VisitorOrchestrator:
             logger.info(f"Visiting {url} using {browser_type} as {persona['user_agent'][:50]}...")
             
             try:
-                # Randomize wait time before navigation to simulate human typing/clicking
+                # Randomize wait time before navigation
                 time.sleep(random.uniform(2, 5))
                 
                 page.goto(url, wait_until='networkidle')
                 
-                # Simulate human behavior: scroll down
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
-                time.sleep(random.uniform(5, 15))
+                # Attempt to click play button if it exists (for YT/Video sites)
+                try:
+                    play_button = page.get_by_label("Play", exact=True)
+                    if play_button.is_visible():
+                        play_button.click()
+                        logger.info("Clicked play button.")
+                except:
+                    pass
+
+                # Simulate human behavior: scroll and wait long enough for a 'view'
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight/3)")
+                
+                # Wait for 35-45 seconds to satisfy 'view' requirements
+                watch_time = random.uniform(35, 45)
+                logger.info(f"Watching/Waiting for {watch_time:.2f}s...")
+                time.sleep(watch_time)
                 
                 logger.info(f"Visit successful: {page.title()}")
             except Exception as e:
