@@ -8,12 +8,16 @@ try:
     from playwright_stealth import stealth_sync as apply_stealth
 except ImportError:
     try:
-        from playwright_stealth import stealth as apply_stealth
-        if not callable(apply_stealth):
-            from playwright_stealth.stealth import stealth as apply_stealth
+        from playwright_stealth import Stealth
+        def apply_stealth(page):
+            Stealth().apply_stealth_sync(page)
     except ImportError:
-        # Fallback if stealth is totally missing
-        def apply_stealth(page): logger.warning("Stealth could not be applied: library mismatch")
+        try:
+            from playwright_stealth import stealth as apply_stealth
+            if not callable(apply_stealth):
+                from playwright_stealth.stealth import stealth as apply_stealth
+        except ImportError:
+            def apply_stealth(page): logger.warning("Stealth could not be applied: library mismatch")
 from fake_useragent import UserAgent
 
 # Setup Logging
@@ -145,10 +149,11 @@ if __name__ == "__main__":
     parser.add_argument("--no-vpn", action="store_true", help="Skip VPN rotation (for testing)")
     args = parser.parse_args()
     
+    target_url = args.url.replace("\\", "")
     orchestrator = VisitorOrchestrator()
     
     if args.no_vpn:
-        logger.info("Running in NO-VPN mode...")
-        orchestrator.perform_visit(args.url)
+        logger.info(f"Running in NO-VPN mode for target: {target_url}")
+        orchestrator.perform_visit(target_url)
     else:
-        orchestrator.run(args.url)
+        orchestrator.run(target_url)
