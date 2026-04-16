@@ -1,0 +1,4 @@
+playwright
+playwright-stealth
+pyyaml
+fake-useragent

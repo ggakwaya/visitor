@@ -1,0 +1,33 @@
+# Geographic probabilities for VPN rotation
+locations:
+  - country: "United States"
+    weight: 45
+    nord_name: "United_States"
+  - country: "Canada"
+    weight: 35
+    nord_name: "Canada"
+  - country: "United Kingdom"
+    weight: 6
+    nord_name: "United_Kingdom"
+  - country: "Germany"
+    weight: 6
+    nord_name: "Germany"
+  - country: "France"
+    weight: 5
+    nord_name: "France"
+  - country: "Japan"
+    weight: 3
+    nord_name: "Japan"
+
+# Browser profile settings
+# Keeping Chromium dominant for better stealth support
+browsers:
+  - type: "chromium"
+    weight: 95
+  - type: "firefox"
+    weight: 5
+
+# Time jitter between visits (seconds)
+jitter:
+  min_delay: 300   # 5 minutes
+  max_delay: 1800  # 30 minutes
