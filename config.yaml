@@ -1,3 +1,7 @@
+# ──────────────────────────────────────────────────────────────
+# Visitor Configuration
+# ──────────────────────────────────────────────────────────────
+
 # List of URLs to visit and their target visit count
 targets:
   - url: "https://www.youtube.com/watch?v=O0OiXEGsMuI"
@@ -6,26 +10,39 @@ targets:
     goal: 50
 
 # Geographic probabilities for VPN rotation
-# ... (rest of the file)
+# Timezones and locales are matched to the VPN exit country
+# so the browser fingerprint is consistent with the IP geolocation.
 locations:
   - country: "United States"
     weight: 45
     nord_name: "United_States"
+    timezones: ["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"]
+    locales: ["en-US"]
   - country: "Canada"
     weight: 35
     nord_name: "Canada"
+    timezones: ["America/Toronto", "America/Vancouver"]
+    locales: ["en-CA"]
   - country: "United Kingdom"
     weight: 6
     nord_name: "United_Kingdom"
+    timezones: ["Europe/London"]
+    locales: ["en-GB"]
   - country: "Germany"
     weight: 6
     nord_name: "Germany"
+    timezones: ["Europe/Berlin"]
+    locales: ["de-DE"]
   - country: "France"
     weight: 5
     nord_name: "France"
+    timezones: ["Europe/Paris"]
+    locales: ["fr-FR"]
   - country: "Japan"
     weight: 3
     nord_name: "Japan"
+    timezones: ["Asia/Tokyo"]
+    locales: ["ja-JP"]
 
 # Browser profile settings
 # Keeping Chromium dominant for better stealth support
@@ -35,7 +52,28 @@ browsers:
   - type: "firefox"
     weight: 5
 
+# Referrer simulation — weighted distribution of traffic sources.
+# Empty url means direct navigation (no referrer header).
+referrers:
+  - url: ""
+    weight: 20
+  - url: "https://www.google.com/"
+    weight: 35
+  - url: "https://www.youtube.com/"
+    weight: 25
+  - url: "https://www.reddit.com/"
+    weight: 10
+  - url: "https://t.co/"
+    weight: 5
+  - url: "https://www.facebook.com/"
+    weight: 5
+
 # Time jitter between visits (seconds)
 jitter:
   min_delay: 300   # 5 minutes
   max_delay: 1800  # 30 minutes
+
+# Session reuse — probability of saving/loading browser state
+# to simulate returning visitors (cookies, localStorage).
+# Sessions are stored in /tmp/visitor-sessions/
+session_reuse_probability: 0.3

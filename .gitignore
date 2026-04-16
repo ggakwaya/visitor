@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Session state files (stored in /tmp, but just in case)
+.sessions/
+*.session.json
+
+# Stats (local state)
+stats.json
+
+# IDE
+.vscode/
+.idea/
