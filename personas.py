@@ -2,7 +2,7 @@
 Coherent browser persona profiles for stealth visiting.
 
 Each profile bundles a real user-agent string with matching viewport,
-device scale factor, platform, and default language — ensuring no
+device scale factor, platform, and default language -- ensuring no
 fingerprint contradictions that detection systems look for.
 
 UA Staleness Tracking:
@@ -45,6 +45,7 @@ PERSONA_PROFILES = [
     # ── Windows + Chrome (most common combo) ────────────────
     {
         "id": "win-chrome-1080p",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 1920, "height": 1080},
         "device_scale_factor": 1,
@@ -53,6 +54,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "win-chrome-768p",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 1366, "height": 768},
         "device_scale_factor": 1,
@@ -61,6 +63,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "win-chrome-864p",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 1536, "height": 864},
         "device_scale_factor": 1.25,
@@ -69,6 +72,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "win-chrome-1440p",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 2560, "height": 1440},
         "device_scale_factor": 1,
@@ -77,6 +81,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "win11-chrome-1080p",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 1920, "height": 1080},
         "device_scale_factor": 1.5,
@@ -87,6 +92,7 @@ PERSONA_PROFILES = [
     # ── macOS + Chrome ──────────────────────────────────────
     {
         "id": "mac-chrome-retina",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 1440, "height": 900},
         "device_scale_factor": 2,
@@ -95,6 +101,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "mac-chrome-1440p",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 2560, "height": 1440},
         "device_scale_factor": 2,
@@ -103,6 +110,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "mac-chrome-13inch",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 1280, "height": 800},
         "device_scale_factor": 2,
@@ -113,6 +121,7 @@ PERSONA_PROFILES = [
     # ── Windows + Firefox ───────────────────────────────────
     {
         "id": "win-firefox-768p",
+        "engine": "firefox",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
         "viewport": {"width": 1366, "height": 768},
         "device_scale_factor": 1,
@@ -121,6 +130,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "win-firefox-1080p",
+        "engine": "firefox",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
         "viewport": {"width": 1920, "height": 1080},
         "device_scale_factor": 1,
@@ -128,9 +138,10 @@ PERSONA_PROFILES = [
         "languages": ["en-US", "en"],
     },
 
-    # ── macOS + Safari ──────────────────────────────────────
+    # ── macOS + Safari (uses webkit engine) ─────────────────
     {
         "id": "mac-safari-retina",
+        "engine": "webkit",
         "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
         "viewport": {"width": 1440, "height": 900},
         "device_scale_factor": 2,
@@ -139,6 +150,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "mac-safari-13inch",
+        "engine": "webkit",
         "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
         "viewport": {"width": 1280, "height": 800},
         "device_scale_factor": 2,
@@ -149,6 +161,7 @@ PERSONA_PROFILES = [
     # ── Linux + Chrome ──────────────────────────────────────
     {
         "id": "linux-chrome-1080p",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 1920, "height": 1080},
         "device_scale_factor": 1,
@@ -159,6 +172,7 @@ PERSONA_PROFILES = [
     # ── Canadian English profiles ───────────────────────────
     {
         "id": "win-chrome-canada",
+        "engine": "chromium",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "viewport": {"width": 1920, "height": 1080},
         "device_scale_factor": 1,
@@ -167,6 +181,7 @@ PERSONA_PROFILES = [
     },
     {
         "id": "win-firefox-canada",
+        "engine": "firefox",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
         "viewport": {"width": 1366, "height": 768},
         "device_scale_factor": 1,
@@ -176,7 +191,7 @@ PERSONA_PROFILES = [
 ]
 
 
-def get_random_persona(timezone_id=None, locale_override=None):
+def get_random_persona(timezone_id=None, locale_override=None, engine=None):
     """
     Select a random persona profile with slight viewport jitter.
 
@@ -185,11 +200,19 @@ def get_random_persona(timezone_id=None, locale_override=None):
                      If None, no timezone is set on the profile.
         locale_override: Override the profile's default language list.
                          Pass a list like ['en-CA', 'fr-CA'].
+        engine: Browser engine name ('chromium', 'firefox', 'webkit').
+                If provided, only personas matching that engine are considered.
 
     Returns:
         A dict with all browser context parameters ready to use.
     """
-    profile = random.choice(PERSONA_PROFILES)
+    pool = PERSONA_PROFILES
+    if engine:
+        pool = [p for p in PERSONA_PROFILES if p["engine"] == engine]
+        if not pool:
+            logger.warning(f"No personas for engine '{engine}', falling back to all")
+            pool = PERSONA_PROFILES
+    profile = random.choice(pool)
     # Deep copy to avoid mutating the original
     persona = {
         "id": profile["id"],

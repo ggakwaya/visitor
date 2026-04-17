@@ -14,8 +14,8 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 echo "--- Installing Playwright Browsers and System Deps ---"
-# This installs the browser binaries
-venv/bin/python3 -m playwright install chromium
+# This installs the browser binaries (both chromium and firefox)
+venv/bin/python3 -m playwright install chromium firefox
 # This installs the required system libraries (GTK, GStreamer, etc.)
 venv/bin/python3 -m playwright install-deps
 

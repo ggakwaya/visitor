@@ -2,13 +2,14 @@
 Human behavior simulation for stealth browser visits.
 
 This module provides functions that mimic real human interaction patterns:
-- Bézier-curve mouse movement (not linear)
+- Bezier-curve mouse movement (not linear) with persistent cursor tracking
 - Idle jitter (hand resting on mouse while watching)
 - Variable-speed scrolling with occasional scroll-back
 - Weighted watch duration distribution
 - YouTube player interactions (hover, fullscreen)
 - Cookie consent banner handling
 - Organic multi-step navigation (arrive via homepage, not direct)
+- Generic website browsing behavior (for non-YouTube targets)
 """
 
 import math
@@ -20,15 +21,44 @@ logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────────
+# Cursor State -- tracks the last known mouse position per page
+# ──────────────────────────────────────────────────────────────
+
+_cursor_positions = {}
+
+
+def _get_cursor(page):
+    """Get the current cursor position for a page, or a plausible default."""
+    page_id = id(page)
+    if page_id in _cursor_positions:
+        return _cursor_positions[page_id]
+    viewport = page.viewport_size or {"width": 1920, "height": 1080}
+    x = random.uniform(viewport["width"] * 0.3, viewport["width"] * 0.7)
+    y = random.uniform(viewport["height"] * 0.3, viewport["height"] * 0.7)
+    _cursor_positions[page_id] = (x, y)
+    return (x, y)
+
+
+def _set_cursor(page, x, y):
+    """Update the tracked cursor position for a page."""
+    _cursor_positions[id(page)] = (x, y)
+
+
+def cleanup_cursor(page):
+    """Remove cursor tracking for a page (call on page close)."""
+    _cursor_positions.pop(id(page), None)
+
+
+# ──────────────────────────────────────────────────────────────
 # Mouse Movement
 # ──────────────────────────────────────────────────────────────
 
 def human_mouse_move(page, target_x, target_y, steps=None):
     """
-    Move the mouse along a cubic Bézier curve with variable speed.
+    Move the mouse along a cubic Bezier curve with variable speed.
 
-    The curve uses random control points so the path is never a straight
-    line. Speed decreases near the target (how a real hand decelerates).
+    Uses the tracked cursor position as the start point (not a random
+    location), so consecutive moves form a continuous path.
 
     Args:
         page: Playwright page object.
@@ -36,19 +66,13 @@ def human_mouse_move(page, target_x, target_y, steps=None):
         target_y: Target Y coordinate.
         steps: Number of steps (auto-calculated from distance if None).
     """
-    viewport = page.viewport_size
-    if not viewport:
-        viewport = {"width": 1920, "height": 1080}
-
-    # Start from a plausible position (current or random edge)
-    start_x = random.randint(int(viewport["width"] * 0.1), int(viewport["width"] * 0.9))
-    start_y = random.randint(int(viewport["height"] * 0.1), int(viewport["height"] * 0.9))
+    start_x, start_y = _get_cursor(page)
 
     if steps is None:
         distance = math.hypot(target_x - start_x, target_y - start_y)
         steps = max(10, int(distance / random.uniform(5, 15)))
 
-    # Random control points for the Bézier curve
+    # Random control points for the Bezier curve
     cp1_x = start_x + random.uniform(-150, 150)
     cp1_y = start_y + random.uniform(-150, 150)
     cp2_x = target_x + random.uniform(-80, 80)
@@ -56,7 +80,7 @@ def human_mouse_move(page, target_x, target_y, steps=None):
 
     for i in range(steps + 1):
         t = i / steps
-        # Cubic Bézier interpolation
+        # Cubic Bezier interpolation
         x = ((1 - t) ** 3 * start_x
              + 3 * (1 - t) ** 2 * t * cp1_x
              + 3 * (1 - t) * t ** 2 * cp2_x
@@ -70,6 +94,7 @@ def human_mouse_move(page, target_x, target_y, steps=None):
         # Variable speed: slower near the target (deceleration)
         time.sleep(random.uniform(0.004, 0.018) * (1 + t * 0.5))
 
+    _set_cursor(page, target_x, target_y)
     logger.debug(f"Mouse moved to ({target_x}, {target_y}) in {steps} steps")
 
 
@@ -88,13 +113,10 @@ def idle_mouse_jitter(page, duration_seconds):
     end_time = time.time() + duration_seconds
     viewport = page.viewport_size or {"width": 1920, "height": 1080}
 
-    # Start with a plausible resting position (center-ish area)
-    current_x = random.uniform(viewport["width"] * 0.3, viewport["width"] * 0.7)
-    current_y = random.uniform(viewport["height"] * 0.3, viewport["height"] * 0.7)
-    page.mouse.move(current_x, current_y)
+    current_x, current_y = _get_cursor(page)
 
     while time.time() < end_time:
-        # Long pause — person is watching the video
+        # Long pause -- person is watching the video
         pause = random.uniform(3, 20)
         time.sleep(min(pause, max(0, end_time - time.time())))
 
@@ -105,7 +127,7 @@ def idle_mouse_jitter(page, duration_seconds):
         action = random.random()
 
         if action < 0.6:
-            # Tiny jitter — hand vibration on the mouse (σ=3px)
+            # Tiny jitter -- hand vibration on the mouse (sigma=3px)
             dx = random.gauss(0, 3)
             dy = random.gauss(0, 3)
             current_x = max(0, min(viewport["width"], current_x + dx))
@@ -113,7 +135,7 @@ def idle_mouse_jitter(page, duration_seconds):
             page.mouse.move(current_x, current_y)
 
         elif action < 0.85:
-            # Slightly bigger drift — repositioning hand (σ=15px)
+            # Slightly bigger drift -- repositioning hand (sigma=15px)
             dx = random.gauss(0, 15)
             dy = random.gauss(0, 15)
             current_x = max(0, min(viewport["width"], current_x + dx))
@@ -121,6 +143,8 @@ def idle_mouse_jitter(page, duration_seconds):
             page.mouse.move(current_x, current_y)
 
         # else: do absolutely nothing (hand is off the mouse)
+
+    _set_cursor(page, current_x, current_y)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -166,16 +190,19 @@ def human_scroll(page):
 # Watch Duration
 # ──────────────────────────────────────────────────────────────
 
-def get_watch_duration():
+def get_watch_duration(max_duration=None):
     """
     Generate a watch duration from a weighted distribution that mimics
-    real viewer behavior.
+    real viewer behavior, optionally capped by the actual video length.
 
     Distribution:
-        15%  →  8-20s   (quick bounce — not interested)
-        45%  → 30-90s   (medium engagement — typical casual viewer)
-        25%  → 90-240s  (good engagement — interested viewer)
-        15%  → 240-600s (deep watcher — very engaged)
+        15%  ->  8-20s   (quick bounce -- not interested)
+        45%  -> 30-90s   (medium engagement -- typical casual viewer)
+        25%  -> 90-240s  (good engagement -- interested viewer)
+        15%  -> 240-600s (deep watcher -- very engaged)
+
+    Args:
+        max_duration: If set, cap the result to this value (e.g. video length).
 
     Returns:
         Watch duration in seconds (float).
@@ -190,7 +217,12 @@ def get_watch_duration():
     else:
         duration = random.uniform(240, 600)
 
-    logger.info(f"Watch duration: {duration:.1f}s")
+    if max_duration and duration > max_duration:
+        # Cap but add slight jitter so it doesn't always stop at exactly max
+        duration = max_duration * random.uniform(0.85, 1.0)
+
+    logger.info(f"Watch duration: {duration:.1f}s" +
+                (f" (capped from video length {max_duration:.0f}s)" if max_duration and duration >= max_duration * 0.84 else ""))
     return duration
 
 
@@ -203,11 +235,11 @@ def interact_with_player(page):
     Perform occasional in-player interactions during playback.
 
     Actions (weighted):
-        70% — do nothing (most natural)
-        15% — hover over the player area (triggers controls overlay)
-         5% — toggle fullscreen (press 'f')
-         5% — hover over the timeline/progress bar
-         5% — press space (pause/unpause, then immediately unpause)
+        70% -- do nothing (most natural)
+        15% -- hover over the player area (triggers controls overlay)
+         5% -- toggle fullscreen (press 'f')
+         5% -- hover over the timeline/progress bar
+         5% -- press space (pause/unpause, then immediately unpause)
 
     Args:
         page: Playwright page object.
@@ -216,7 +248,7 @@ def interact_with_player(page):
     r = random.random()
 
     if r < 0.70:
-        # Do nothing — most people just watch
+        # Do nothing -- most people just watch
         return
 
     elif r < 0.85:
@@ -327,6 +359,64 @@ def navigate_organically(page, target_url, probability=0.4):
         time.sleep(random.uniform(1, 4))
 
         # Now navigate to the target
-        page.goto(target_url, wait_until="networkidle")
+        page.goto(target_url, wait_until="domcontentloaded")
     else:
-        page.goto(target_url, wait_until="networkidle")
+        page.goto(target_url, wait_until="domcontentloaded")
+
+
+# ──────────────────────────────────────────────────────────────
+# Generic Website Browsing
+# ──────────────────────────────────────────────────────────────
+
+def browse_generic_page(page):
+    """
+    Simulate realistic browsing behavior on a non-YouTube page.
+
+    Actions: read the page (scroll), maybe click an internal link,
+    hover over a few elements.
+
+    Args:
+        page: Playwright page object.
+    """
+    viewport = page.viewport_size or {"width": 1920, "height": 1080}
+
+    # Initial reading pause
+    time.sleep(random.uniform(2, 5))
+
+    # Scroll through the page
+    human_scroll(page)
+    time.sleep(random.uniform(1, 4))
+
+    # Maybe move the mouse to a few random points (reading/exploring)
+    for _ in range(random.randint(1, 3)):
+        target_x = random.randint(int(viewport["width"] * 0.1), int(viewport["width"] * 0.9))
+        target_y = random.randint(int(viewport["height"] * 0.1), int(viewport["height"] * 0.7))
+        human_mouse_move(page, target_x, target_y)
+        time.sleep(random.uniform(0.5, 3.0))
+
+    # Idle on the page for a bit
+    idle_mouse_jitter(page, random.uniform(5, 30))
+
+    logger.debug("Finished generic page browsing")
+
+
+def get_video_duration(page):
+    """
+    Try to extract the video duration from a YouTube page.
+
+    Returns:
+        Duration in seconds, or None if it cannot be determined.
+    """
+    try:
+        duration = page.evaluate("""
+            () => {
+                const el = document.querySelector('video');
+                if (el && el.duration && isFinite(el.duration)) return el.duration;
+                return null;
+            }
+        """)
+        if duration:
+            logger.debug(f"Detected video duration: {duration:.0f}s")
+        return duration
+    except Exception:
+        return None

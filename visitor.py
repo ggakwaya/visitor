@@ -16,27 +16,43 @@ import time
 import random
 import subprocess
 import logging
+import logging.handlers
 import json
 import os
 import glob
+import signal
+import sys
+import tempfile
 
 from playwright.sync_api import sync_playwright
 
+# ──────────────────────────────────────────────────────────────
+# Stealth Import -- try multiple API shapes, log clearly on failure
+# ──────────────────────────────────────────────────────────────
+
+_stealth_available = False
+
 try:
     from playwright_stealth import stealth_sync as apply_stealth
+    _stealth_available = True
 except ImportError:
     try:
         from playwright_stealth import Stealth
         def apply_stealth(page):
             Stealth().apply_stealth_sync(page)
-    except ImportError:
+        _stealth_available = True
+    except (ImportError, AttributeError):
         try:
-            from playwright_stealth import stealth as apply_stealth
-            if not callable(apply_stealth):
+            from playwright_stealth import stealth as _stealth_fn
+            if callable(_stealth_fn):
+                apply_stealth = _stealth_fn
+                _stealth_available = True
+            else:
                 from playwright_stealth.stealth import stealth as apply_stealth
-        except ImportError:
+                _stealth_available = True
+        except (ImportError, AttributeError):
             def apply_stealth(page):
-                logger.warning("Stealth could not be applied: library mismatch")
+                pass
 
 from personas import get_random_persona, check_ua_staleness
 from behavior import (
@@ -44,23 +60,51 @@ from behavior import (
     idle_mouse_jitter,
     human_scroll,
     get_watch_duration,
+    get_video_duration,
     interact_with_player,
     handle_consent,
     navigate_organically,
+    browse_generic_page,
+    cleanup_cursor,
 )
 
 # ──────────────────────────────────────────────────────────────
-# Setup Logging
+# Setup Logging -- stdout + rotating file
 # ──────────────────────────────────────────────────────────────
+
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.handlers.RotatingFileHandler(
+            os.path.join(LOG_DIR, "visitor.log"),
+            maxBytes=5 * 1024 * 1024,  # 5 MB per file
+            backupCount=5,
+        ),
+    ],
 )
 logger = logging.getLogger(__name__)
 
+if not _stealth_available:
+    logger.error(
+        "playwright-stealth could not be loaded -- visits will NOT be stealthy. "
+        "Install it with: pip install playwright-stealth"
+    )
+
 # Session storage directory
 SESSION_DIR = "/tmp/visitor-sessions"
+
+# Platform override JS -- injected into every page to make
+# navigator.platform match the persona's UA string.
+PLATFORM_OVERRIDE_JS = """
+Object.defineProperty(navigator, 'platform', {
+    get: () => '%s',
+});
+"""
 
 
 class VisitorOrchestrator:
@@ -71,6 +115,27 @@ class VisitorOrchestrator:
         self.load_stats()
         self._ensure_session_dir()
         self._check_ua_freshness()
+
+        # Graceful shutdown state
+        self._shutdown_requested = False
+        self._active_browser = None
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+
+    def _handle_shutdown(self, signum, frame):
+        """Handle SIGINT/SIGTERM for clean shutdown."""
+        sig_name = signal.Signals(signum).name
+        if self._shutdown_requested:
+            logger.warning(f"Second {sig_name} received, forcing exit")
+            sys.exit(1)
+        logger.info(f"{sig_name} received -- finishing current visit then exiting...")
+        self._shutdown_requested = True
+        # If there's an active browser, close it
+        if self._active_browser:
+            try:
+                self._active_browser.close()
+            except Exception:
+                pass
 
     def _ensure_session_dir(self):
         """Create the session storage directory if it doesn't exist."""
@@ -83,7 +148,7 @@ class VisitorOrchestrator:
             logger.warning(result["message"])
         else:
             logger.info(
-                f"UA strings verified {result['days_since_verified']} days ago — still fresh"
+                f"UA strings verified {result['days_since_verified']} days ago -- still fresh"
             )
 
     def load_stats(self):
@@ -98,9 +163,20 @@ class VisitorOrchestrator:
             self.stats = {}
 
     def save_stats(self):
-        """Saves visit statistics to a JSON file."""
-        with open(self.stats_path, "w") as f:
-            json.dump(self.stats, f, indent=4)
+        """Saves visit statistics atomically (write-to-tmp then rename)."""
+        dir_name = os.path.dirname(os.path.abspath(self.stats_path))
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.stats, f, indent=4)
+            os.replace(tmp_path, self.stats_path)
+        except Exception as e:
+            logger.error(f"Failed to save stats: {e}")
+            # Try to clean up the temp file
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
     # ──────────────────────────────────────────────────────────
     # VPN Rotation
@@ -109,11 +185,10 @@ class VisitorOrchestrator:
     def rotate_vpn(self):
         """
         Connects to a new NordVPN location based on weighted probability.
+        Verifies the IP actually changed after connecting.
 
         Returns:
             The selected location dict on success, or None on failure.
-            The location dict contains 'country', 'nord_name', 'timezones',
-            and 'locales' keys.
         """
         locations = self.config["locations"]
         weights = [loc["weight"] for loc in locations]
@@ -139,10 +214,33 @@ class VisitorOrchestrator:
             if result.returncode != 0:
                 logger.error(f"Failed to connect to VPN: {result.stderr}")
                 return None
+
+            # Verify the VPN is actually working by checking external IP
+            if not self._verify_vpn_ip():
+                logger.error("VPN IP verification failed -- connection may not be active")
+                return None
+
             return selected
         except Exception as e:
             logger.error(f"VPN rotation error: {e}")
             return None
+
+    def _verify_vpn_ip(self):
+        """Verify VPN connection by checking the external IP address."""
+        try:
+            result = subprocess.run(
+                ["curl", "-s", "--max-time", "10", "https://ifconfig.me"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                logger.info(f"VPN active -- external IP: {result.stdout.strip()}")
+                return True
+            logger.warning("Could not determine external IP")
+            return False
+        except Exception as e:
+            logger.warning(f"IP verification failed: {e}")
+            return False
 
     # ──────────────────────────────────────────────────────────
     # Referrer Selection
@@ -218,12 +316,31 @@ class VisitorOrchestrator:
                     pass
 
     # ──────────────────────────────────────────────────────────
+    # Target Type Detection
+    # ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_youtube_video(url):
+        """Check if a URL is a YouTube video page."""
+        return "youtube.com/watch" in url or "youtu.be/" in url
+
+    @staticmethod
+    def _is_youtube(url):
+        """Check if a URL is any YouTube page."""
+        return "youtube.com" in url or "youtu.be" in url
+
+    # ──────────────────────────────────────────────────────────
     # Core Visit Logic
     # ──────────────────────────────────────────────────────────
 
     def perform_visit(self, url, location=None, headless=True):
         """
         Executes a stealthy, human-like browser visit.
+
+        Branches behavior based on target type:
+        - YouTube videos: organic nav, play button, watch with jitter,
+          player interactions, comment scrolling
+        - Other sites: generic browse (scroll, hover, idle)
 
         Args:
             url: Target URL to visit.
@@ -241,22 +358,14 @@ class VisitorOrchestrator:
         locale_override = None
 
         if location:
-            # Pick a random timezone from the VPN exit country
             timezones = location.get("timezones", [])
             if timezones:
                 timezone_id = random.choice(timezones)
-
-            # Match locale to VPN exit country
             locales = location.get("locales", [])
             if locales:
                 locale_override = locales
 
-        persona = get_random_persona(
-            timezone_id=timezone_id,
-            locale_override=locale_override,
-        )
-
-        # ── Select browser engine ──────────────────────────
+        # ── Select browser engine FIRST, then match persona ──
         browser_config = self.config["browsers"]
         browser_type = random.choices(
             [b["type"] for b in browser_config],
@@ -264,8 +373,16 @@ class VisitorOrchestrator:
             k=1,
         )[0]
 
+        persona = get_random_persona(
+            timezone_id=timezone_id,
+            locale_override=locale_override,
+            engine=browser_type,
+        )
+
         # ── Select referrer ────────────────────────────────
         referrer = self._get_random_referrer()
+
+        is_yt_video = self._is_youtube_video(url)
 
         logger.info(
             f"Visit: {url}\n"
@@ -274,13 +391,25 @@ class VisitorOrchestrator:
             f"@{persona['device_scale_factor']}x\n"
             f"  Timezone: {persona.get('timezone_id', 'system')} | "
             f"Locale: {persona['languages'][0]}\n"
-            f"  Referrer: {referrer or '(direct)'}"
+            f"  Referrer: {referrer or '(direct)'}\n"
+            f"  Type: {'YouTube video' if is_yt_video else 'generic page'}"
         )
 
         with sync_playwright() as p:
             try:
                 browser_engine = getattr(p, browser_type)
-                browser = browser_engine.launch(headless=headless)
+
+                # Launch args -- disable WebRTC IP leak for Chromium
+                launch_kwargs = {"headless": headless}
+                if browser_type == "chromium":
+                    launch_kwargs["args"] = [
+                        "--disable-features=WebRtcHideLocalIpsWithMdns",
+                        "--enforce-webrtc-ip-permission-check",
+                        "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+                    ]
+
+                browser = browser_engine.launch(**launch_kwargs)
+                self._active_browser = browser
 
                 # ── Build browser context ──────────────────
                 context_kwargs = {
@@ -293,8 +422,8 @@ class VisitorOrchestrator:
                 if persona.get("timezone_id"):
                     context_kwargs["timezone_id"] = persona["timezone_id"]
 
-                if referrer:
-                    context_kwargs["extra_http_headers"] = {"Referer": referrer}
+                # Don't put referrer in extra_http_headers -- it leaks on
+                # every subrequest. We pass it to page.goto() instead.
 
                 # Try to load a saved session (returning visitor)
                 session_state = self._load_session_state(persona["id"])
@@ -302,6 +431,10 @@ class VisitorOrchestrator:
                     context_kwargs["storage_state"] = session_state
 
                 context = browser.new_context(**context_kwargs)
+
+                # Inject navigator.platform override to match the persona
+                context.add_init_script(PLATFORM_OVERRIDE_JS % persona["platform"])
+
                 page = context.new_page()
 
                 # Apply stealth plugins
@@ -310,63 +443,133 @@ class VisitorOrchestrator:
                 # ── Pre-navigation delay ───────────────────
                 time.sleep(random.uniform(1, 3))
 
-                # ── Navigate (possibly organically) ────────
-                navigate_organically(page, url, probability=0.4)
-
-                # ── Handle consent popups ──────────────────
-                handle_consent(page)
-
-                # ── Click play button ──────────────────────
-                try:
-                    play_button = page.get_by_label("Play", exact=True)
-                    if play_button.is_visible(timeout=3000):
-                        # Move mouse to the play button like a human
-                        box = play_button.bounding_box()
-                        if box:
-                            target_x = box["x"] + box["width"] / 2
-                            target_y = box["y"] + box["height"] / 2
-                            human_mouse_move(page, target_x, target_y)
-                            time.sleep(random.uniform(0.2, 0.8))
-                            play_button.click()
-                            logger.info("Clicked play button")
-                except Exception:
-                    pass
-
-                # ── Watch with human-like behavior ─────────
-                watch_time = get_watch_duration()
-
-                # Split watch time into segments with interactions
-                elapsed = 0
-                while elapsed < watch_time:
-                    # Watch a segment (10-40s chunk, or whatever remains)
-                    segment = min(random.uniform(10, 40), watch_time - elapsed)
-                    idle_mouse_jitter(page, segment)
-                    elapsed += segment
-
-                    # Maybe interact with the player between segments
-                    if elapsed < watch_time:
-                        interact_with_player(page)
-
-                # ── Post-watch scrolling (read comments) ───
-                if random.random() < 0.4:
-                    logger.debug("Scrolling to comments")
-                    human_scroll(page)
-                    time.sleep(random.uniform(2, 8))
+                # ── Navigate ──────────────────────────────
+                if is_yt_video:
+                    self._visit_youtube_video(page, url, referrer)
+                else:
+                    self._visit_generic_page(page, url, referrer)
 
                 # ── Save session for future reuse ──────────
                 self._save_session_state(context, persona["id"])
 
                 logger.info(f"Visit successful: {page.title()}")
+                cleanup_cursor(page)
                 return True
 
             except Exception as e:
                 logger.error(f"Visit failed: {e}")
                 return False
             finally:
+                self._active_browser = None
                 try:
                     browser.close()
                 except Exception:
                     pass
+
+    def _visit_youtube_video(self, page, url, referrer):
+        """YouTube-specific visit: organic nav, play, watch, interact."""
+        # Navigate (possibly organically via homepage)
+        # Pass referrer only on the goto call, not as a persistent header
+        if random.random() < 0.4:
+            logger.info("Organic navigation: visiting YouTube homepage first")
+            page.goto("https://www.youtube.com/", wait_until="domcontentloaded")
+            time.sleep(random.uniform(2, 6))
+            handle_consent(page)
+            human_scroll(page)
+            time.sleep(random.uniform(1, 4))
+            goto_kwargs = {"url": url, "wait_until": "domcontentloaded"}
+            if referrer:
+                goto_kwargs["referer"] = referrer
+            page.goto(**goto_kwargs)
+        else:
+            goto_kwargs = {"url": url, "wait_until": "domcontentloaded"}
+            if referrer:
+                goto_kwargs["referer"] = referrer
+            page.goto(**goto_kwargs)
+
+        # Handle consent popups
+        handle_consent(page)
+
+        # Wait for the video player to be ready
+        try:
+            page.wait_for_selector("video", timeout=10000)
+        except Exception:
+            logger.debug("Video element not found, continuing anyway")
+
+        # Click play button
+        try:
+            play_button = page.get_by_label("Play", exact=True)
+            if play_button.is_visible(timeout=3000):
+                box = play_button.bounding_box()
+                if box:
+                    target_x = box["x"] + box["width"] / 2
+                    target_y = box["y"] + box["height"] / 2
+                    human_mouse_move(page, target_x, target_y)
+                    time.sleep(random.uniform(0.2, 0.8))
+                    play_button.click()
+                    logger.info("Clicked play button")
+        except Exception:
+            pass
+
+        # Get actual video duration to cap watch time
+        video_duration = get_video_duration(page)
+        watch_time = get_watch_duration(max_duration=video_duration)
+
+        # Split watch time into segments with interactions
+        elapsed = 0
+        while elapsed < watch_time:
+            segment = min(random.uniform(10, 40), watch_time - elapsed)
+            idle_mouse_jitter(page, segment)
+            elapsed += segment
+
+            if elapsed < watch_time:
+                interact_with_player(page)
+
+        # Post-watch scrolling (read comments)
+        if random.random() < 0.4:
+            logger.debug("Scrolling to comments")
+            human_scroll(page)
+            time.sleep(random.uniform(2, 8))
+
+    def _visit_generic_page(self, page, url, referrer):
+        """Generic page visit: navigate, scroll, browse."""
+        goto_kwargs = {"url": url, "wait_until": "domcontentloaded"}
+        if referrer:
+            goto_kwargs["referer"] = referrer
+        page.goto(**goto_kwargs)
+
+        handle_consent(page)
+        browse_generic_page(page)
+
+    # ──────────────────────────────────────────────────────────
+    # Visit with Retry
+    # ──────────────────────────────────────────────────────────
+
+    def perform_visit_with_retry(self, url, location=None, headless=True):
+        """
+        Attempt a visit with exponential backoff on failure.
+
+        Retries up to max_retries times (from config, default 3).
+        """
+        max_retries = self.config.get("max_retries", 3)
+        for attempt in range(1, max_retries + 1):
+            if self._shutdown_requested:
+                return False
+
+            success = self.perform_visit(url, location=location, headless=headless)
+            if success:
+                return True
+
+            if attempt < max_retries:
+                backoff = min(60, (2 ** attempt) + random.uniform(0, 5))
+                logger.warning(
+                    f"Visit attempt {attempt}/{max_retries} failed, "
+                    f"retrying in {backoff:.0f}s..."
+                )
+                time.sleep(backoff)
+
+        logger.error(f"All {max_retries} visit attempts failed for {url}")
+        return False
 
     # ──────────────────────────────────────────────────────────
     # Main Loop
@@ -374,7 +577,7 @@ class VisitorOrchestrator:
 
     def run(self):
         """Main loop for 24/7 operation over multiple targets."""
-        while True:
+        while not self._shutdown_requested:
             # Filter targets that haven't reached their goal yet
             active_targets = []
             for t in self.config["targets"]:
@@ -393,7 +596,9 @@ class VisitorOrchestrator:
 
             location = self.rotate_vpn()
             if location:
-                if self.perform_visit(target["url"], location=location):
+                if self.perform_visit_with_retry(
+                    target["url"], location=location
+                ):
                     # Update stats
                     self.stats[target["url"]] = self.stats.get(target["url"], 0) + 1
                     self.save_stats()
@@ -411,6 +616,12 @@ class VisitorOrchestrator:
             else:
                 logger.warning("Retrying VPN rotation in 60s...")
                 time.sleep(60)
+
+        if self._shutdown_requested:
+            logger.info("Shutdown complete. Final statistics:")
+            for url, count in self.stats.items():
+                logger.info(f"  - {url}: {count} visits")
+            self.save_stats()
 
 
 if __name__ == "__main__":

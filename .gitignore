@@ -12,6 +12,9 @@ venv/
 # Stats (local state)
 stats.json
 
+# Logs
+logs/
+
 # IDE
 .vscode/
 .idea/

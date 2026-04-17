@@ -52,7 +52,7 @@ browsers:
   - type: "firefox"
     weight: 5
 
-# Referrer simulation — weighted distribution of traffic sources.
+# Referrer simulation -- weighted distribution of traffic sources.
 # Empty url means direct navigation (no referrer header).
 referrers:
   - url: ""
@@ -73,7 +73,10 @@ jitter:
   min_delay: 300   # 5 minutes
   max_delay: 1800  # 30 minutes
 
-# Session reuse — probability of saving/loading browser state
+# Session reuse -- probability of saving/loading browser state
 # to simulate returning visitors (cookies, localStorage).
 # Sessions are stored in /tmp/visitor-sessions/
 session_reuse_probability: 0.3
+
+# Maximum retry attempts per visit (with exponential backoff)
+max_retries: 3
